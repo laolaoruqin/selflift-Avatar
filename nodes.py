@@ -30,6 +30,7 @@ import latent_preview
 
 from . import selflift
 from . import avatar_masks
+from .avatar_sampling import native_mask_model
 from . import h3_upscaler
 from . import h3_tiling
 from . import h3_tst
@@ -232,23 +233,6 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
     source_video = streams[0].to(device)
     audio_streams = [s.to(device) for s in streams[1:]]
 
-    def masked_model(base, anchors, masks):
-        if masks is None:
-            return base
-        patched = base.clone()
-        if nested:
-            anchor, _ = comfy.utils.pack_latents(anchors)
-            mask, _ = comfy.utils.pack_latents([
-                m.to(a.device).expand_as(a) for m, a in zip(masks, anchors)
-            ])
-        else:
-            anchor, mask = anchors[0], masks[0]
-        hook = avatar_masks.blend_hook(anchor, mask)
-        patched.model_options = comfy.model_patcher.set_model_options_post_cfg_function(patched.model_options, hook)
-        if "denoise_mask_function" in base.model_options:
-            logging.warning("selflift-Avatar: uses static input masks; dynamic denoise_mask_function is not applied")
-        return patched
-
     if video:
         low_video = torch.nn.functional.interpolate(
             source_video.float(), size=(t, h, w), mode="trilinear", align_corners=False
@@ -265,8 +249,8 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
         low_masks = [m_low] + noise_masks[1:]
     video_anchor = source_video
     low_latent = _pack([low_video] + audio_streams, nested)
-    low_model = masked_model(model, [low_video] + audio_streams, low_masks)
-    high_model = masked_model(high_model, [video_anchor] + audio_streams, noise_masks)
+    low_model = native_mask_model(model, [low_video] + audio_streams, low_masks, nested)
+    high_model = native_mask_model(high_model, [video_anchor] + audio_streams, noise_masks, nested)
     del source_video, low_video
     del streams
     noise_low = comfy.sample.prepare_noise(low_latent, seed, latent_image.get("batch_index", None))

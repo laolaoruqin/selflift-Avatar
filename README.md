@@ -2,19 +2,23 @@
 
 用于 ComfyUI / MiniMax H3 的 **SelfLift 独立实验分支**，重点适配音视频双流遮罩和原始音频保留。与原版节点使用不同的注册 ID，可以并存。
 
-> **实验版本，非官方项目。** 已通过 26 项 CPU 测试，但未完成真实 H3 大模型视频生成验证。测试通过不代表实际成片效果、性能或其他插件组合已验证。
+> **实验版本，非官方项目。** v0.1.1 已通过 28 项 CPU 测试；维护者反馈当前工作流试用可用。尚无系统性的口型准确率、性能或多模型组合验证，不保证所有音频与角色都能准确同步。
 
 ## 安装
 
 需要一套已经能够运行 MiniMax H3 的 ComfyUI，以及该工作流本来需要的模型、VAE 和可选 latent upscaler。此项目不包含模型权重，也不安装新的依赖。
 
-在 `ComfyUI/custom_nodes` 下执行（私有仓库需要 GitHub 访问权限）：
+在 `ComfyUI/custom_nodes` 下执行：
 
 ```bash
 git clone https://github.com/slmonker/selflift-Avatar.git
 ```
 
 或下载 Release 中的 ZIP，将其中的 `selflift-Avatar` 文件夹放入 `ComfyUI/custom_nodes`。之后重启 ComfyUI 后端并刷新页面。
+
+## 更新
+
+Git 安装：在本插件目录执行 `git pull --ff-only`，然后重启 ComfyUI 后端。ZIP 安装：先备份旧插件目录，再用新版文件替换并重启。原版 SelfLift 不需要删除。
 
 ## 使用
 
@@ -52,10 +56,19 @@ git clone https://github.com/slmonker/selflift-Avatar.git
 ## 采样约束与修复
 
 - 低清和高清阶段分别应用对应视频 mask；音频 mask 不随空间分辨率缩放。
+- v0.1.1 在条件构建前通过 ModelPatcher 的 OUTER_SAMPLE wrapper 传入正确打包的 mask，让 H3 生成 `audio_denoise_mask` 条件标签。
+- 使用原生 `KSamplerX0Inpaint` 和 H3 `scale_latent_inpaint` 在模型输入侧注入已知音频，不再只在预测后恢复音频。
+- 高清阶段把带噪 resume 状态与干净 inpaint anchor 分开，保留原始采样状态，避免将残余噪声当成原音频。
 - 约束原内容时调用实际采样模型的 `process_latent_in`，包含 H3 的音频尺度转换。
 - 返回前仅对 `mask==0` 的位置恢复原始 latent，不重复混合软遮罩。
 - 修复纯像素 anchor 模式（`rho=w_min=w_max=1`）带 mask 时的 None 运算问题。
 - 报错包含实际 mask 类型、各流形状和 latent 形状。
+
+## 口型效果排查
+
+音频保留不等于口型质量保证。外部 latent upscaler 包含时间卷积且不直接接收目标音频，放大过程和剩余高清采样步数可能影响嘴部细节；当前没有量化归因。
+
+固定模型、音频片段、seed、提示词、帧数及输出 FPS，先与原生全分辨率采样比较，再分别测试更多高清采样步数或不使用外部 upscaler 的像素 anchor 路径，避免同时更改多个参数。不同路径随机数消耗可能不同，需多个 seed 复核。
 
 ## 已知限制
 
@@ -73,7 +86,9 @@ git clone https://github.com/slmonker/selflift-Avatar.git
 python tests/test_avatar.py
 ```
 
-26 项 CPU 测试包括音视频打包、真实 H3 音频尺度转换、全零/全一遮罩、前段保留、软遮罩、多通道、恒定图像尺寸音频遮罩和两阶段流程。两阶段测试采用合成 denoiser 与模拟 VAE lift，不加载模型权重或生成视频。
+28 项 CPU 测试包括音视频打包、真实 H3 音频尺度转换、全零/全一遮罩、前段保留、软遮罩、多通道、恒定图像尺寸音频遮罩和两阶段流程。
+
+两阶段测试使用真实 Euler、原生 inpaint 调用链、合成 denoiser 与模拟 VAE lift。新增检查确认低清/高清阶段均产生音频遮罩条件，且模型输入在撤销音频 carry 变换后与被保留的音频一致。测试不加载大模型权重，也不衡量实际口型质量。
 
 ## 来源与许可说明
 

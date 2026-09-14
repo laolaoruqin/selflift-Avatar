@@ -103,16 +103,6 @@ def normalize_masks(mask, streams):
     return normalized
 
 
-def blend_hook(anchor, mask):
-    """Convert the raw anchor after the sampler sets its current AV shapes/scale."""
-    def blend(args):
-        denoised = args["denoised"]
-        clean = args["model"].process_latent_in(anchor.to(denoised))
-        weight = mask.to(denoised)
-        return denoised * weight + clean * (1.0 - weight)
-    return blend
-
-
 def restore_kept(outputs, anchors, masks):
     return [torch.where(mask.to(out.device) == 0, anchor.to(out), out)
             for out, anchor, mask in zip(outputs, anchors, masks)]

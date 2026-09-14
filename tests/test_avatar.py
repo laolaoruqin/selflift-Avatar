@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 PLUGIN = Path(__file__).resolve().parents[1]
@@ -17,7 +18,7 @@ spec = importlib.util.spec_from_file_location('selflift_avatar_test', PLUGIN/'__
 plugin = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = plugin
 spec.loader.exec_module(plugin)
-from selflift_avatar_test import nodes, avatar_masks as masks, selflift
+from selflift_avatar_test import nodes, avatar_masks as masks, selflift, avatar_sampling
 import torch
 import comfy.latent_formats
 import comfy.model_base
@@ -38,6 +39,8 @@ class TinyH3(comfy.model_base.MiniMaxH3):
         self.model_sampling = AVSampling()
         self.model_sampling.set_parameters(shift=3.0, audio_shift=1.0)
         self.latent_shapes = None
+        self.diffusion_model = torch.nn.Module()
+        self.diffusion_model.patch_size = (1, 2, 2)
 
 class Patcher:
     def __init__(self):
@@ -48,6 +51,8 @@ class Patcher:
         result = copy.copy(self)
         result.model_options = copy.deepcopy(self.model_options)
         return result
+    def add_wrapper_with_key(self, kind, key, wrapper):
+        comfy.patcher_extension.add_wrapper_with_key(kind, key, wrapper, self.model_options, is_model_options=True)
     def get_model_object(self, key):
         return getattr(self.model, key)
 
@@ -135,14 +140,22 @@ class MaskTests(unittest.TestCase):
             masks.normalize_masks(torch.full((1,8,10), float('nan')), self.streams)
         out = masks.normalize_masks(torch.full((1,8,10), 2.), self.streams)
         self.assertEqual(out[0].max(), 1.)
-    def test_real_h3_audio_scale_in_hook(self):
+    def test_real_h3_audio_scale_in_anchor_sampler(self):
         inner = TinyH3()
         anchor, inner.latent_shapes = comfy.utils.pack_latents(self.streams)
-        hook = masks.blend_hook(anchor, torch.zeros_like(anchor))
-        out = hook({'model': inner, 'denoised': torch.ones_like(anchor)})
-        v, a = comfy.utils.unpack_latents(out, inner.latent_shapes)
-        torch.testing.assert_close(v, self.v)
-        torch.testing.assert_close(a, self.a * 3.)
+        model_k = SimpleNamespace(inner_model=SimpleNamespace(inner_model=inner),latent_image=torch.ones_like(anchor))
+        captured = []
+        def original(k, x, sigmas, **kwargs):
+            captured.append((k.latent_image.clone(), x.clone()))
+            return x
+        sampler = comfy.samplers.KSAMPLER(original)
+        wrapped = avatar_sampling.anchored_sampler(sampler,anchor)
+        initial_state = torch.full_like(anchor,17.)
+        out = wrapped.sampler_function(model_k,initial_state,torch.tensor([.5,0.]))
+        v,a = comfy.utils.unpack_latents(captured[0][0],inner.latent_shapes)
+        torch.testing.assert_close(v,self.v)
+        torch.testing.assert_close(a,self.a*3.)
+        torch.testing.assert_close(out,initial_state)
     def test_soft_mask_not_reblended_at_output(self):
         out = masks.restore_kept([torch.ones(3)], [torch.zeros(3)], [torch.tensor([0., .5, 1.])])[0]
         torch.testing.assert_close(out, torch.tensor([0., 1., 1.]))
@@ -166,24 +179,47 @@ class PipelineTests(unittest.TestCase):
         self.v = torch.randn(2,24,3,8,8)
         self.a = torch.randn(2,32,2,7)
         self.stages = []
+        self.audio_inputs = []
+        self.mask_conds = []
     def sample(self, model, noise, positive, negative, cfg, device, sampler, sigmas, options,
                latent_image, callback, disable_pbar, seed):
-        inner = model.model
-        raw, inner.latent_shapes = comfy.utils.pack_latents(latent_image.unbind())
+        raw, shapes = comfy.utils.pack_latents(latent_image.unbind())
         eps, _ = comfy.utils.pack_latents(noise.unbind())
-        state = inner.model_sampling.noise_scaling(sigmas[0], eps, inner.process_latent_in(raw))
-        count = 0
-        for i in range(len(sigmas)-1):
-            prediction = torch.full_like(state, .125)
-            for hook in options.get('sampler_post_cfg_function', []):
-                prediction = hook({'model':inner, 'denoised':prediction, 'sigma':sigmas[i]})
-            callback(i, NestedTensor(comfy.utils.unpack_latents(prediction, inner.latent_shapes)),
-                     NestedTensor(comfy.utils.unpack_latents(state, inner.latent_shapes)), len(sigmas)-1)
-            state = nodes._euler_step(state, prediction, sigmas[i], sigmas[i+1])
-            count += 1
-        self.stages.append(count)
-        raw_out = inner.process_latent_out(inner.model_sampling.inverse_noise_scaling(sigmas[-1], state))
-        return NestedTensor(comfy.utils.unpack_latents(raw_out, inner.latent_shapes))
+        owner = self
+        class Denoiser:
+            def __init__(self, inner):
+                self.inner_model = inner
+                self.model_patcher = model
+                self.cfg = cfg
+            def __call__(self, x, sigma, model_options, seed):
+                av = comfy.utils.unpack_latents(x,self.inner_model.latent_shapes)
+                sigma_a = comfy.ldm.minimax.model.time_shift_sigma(sigma,self.inner_model.model_sampling.shift,
+                                                                   self.inner_model.model_sampling.audio_shift)
+                audio_seen = av[1] * (sigma_a / sigma).reshape(-1,1,1,1)
+                owner.audio_inputs.append(audio_seen.clone())
+                return torch.full_like(x,.125)
+        def outer(noise, latent_image, stage_sampler, sigmas, denoise_mask=None,
+                  callback=None, disable_pbar=False, seed=None, latent_shapes=None):
+            inner = model.model
+            inner.latent_shapes = latent_shapes
+            native_conds = {} if denoise_mask is None else inner._denoise_mask_values(denoise_mask,latent_shapes)
+            owner.mask_conds.append(native_conds)
+            count = 0
+            def report(i, x0, x, total):
+                nonlocal count
+                count += 1
+                callback(i,NestedTensor(comfy.utils.unpack_latents(x0,latent_shapes)),
+                         NestedTensor(comfy.utils.unpack_latents(x,latent_shapes)),total)
+            sampled = stage_sampler.sample(Denoiser(inner),sigmas,{'model_options':options,'seed':seed},
+                                           report,noise,latent_image=inner.process_latent_in(latent_image),
+                                           denoise_mask=denoise_mask,disable_pbar=True)
+            owner.stages.append(count)
+            return inner.process_latent_out(sampled)
+        wrappers = comfy.patcher_extension.get_all_wrappers(comfy.patcher_extension.WrappersMP.OUTER_SAMPLE,
+                                                           options,is_model_options=True)
+        executor = comfy.patcher_extension.WrapperExecutor.new_class_executor(outer,SimpleNamespace(model_patcher=model),wrappers)
+        out = executor.execute(eps,raw,sampler,sigmas,None,callback,disable_pbar,seed,latent_shapes=shapes)
+        return NestedTensor(comfy.utils.unpack_latents(out,shapes))
     def run_pipeline(self, mask, rho=0., tiling=False):
         latent = {'samples':NestedTensor([self.v,self.a]), 'tag':'preserved'}
         if mask is not None:
@@ -227,6 +263,22 @@ class PipelineTests(unittest.TestCase):
         torch.testing.assert_close(out[1],self.a,rtol=0,atol=0)
         self.assertFalse(torch.equal(out[0],self.v))
         self.assertEqual(self.stages,[2,2])
+    def test_native_audio_condition_reaches_both_stages(self):
+        self.run_pipeline(NestedTensor([torch.ones_like(self.v),torch.zeros_like(self.a)]))
+        self.assertEqual(len(self.mask_conds),2)
+        for cond in self.mask_conds:
+            self.assertIn('audio_denoise_mask',cond)
+            self.assertEqual(cond['audio_denoise_mask'].count_nonzero(),0)
+        self.assertEqual(len(self.audio_inputs),4)
+        for audio in self.audio_inputs:
+            torch.testing.assert_close(audio,self.a,rtol=1e-5,atol=1e-5)
+    def test_native_partial_audio_condition(self):
+        ma=torch.ones_like(self.a); ma[...,:3]=0
+        self.run_pipeline(NestedTensor([torch.ones_like(self.v),ma]))
+        for cond in self.mask_conds:
+            self.assertEqual(cond['audio_denoise_mask'][...,:3].count_nonzero(),0)
+        for audio in self.audio_inputs:
+            torch.testing.assert_close(audio[...,:3],self.a[...,:3],rtol=1e-5,atol=1e-5)
     def test_pure_anchor_pipeline(self):
         out = self.run_pipeline(NestedTensor([torch.zeros_like(self.v),torch.zeros_like(self.a)]),rho=1.)['samples'].unbind()
         for a,b in zip(out,[self.v,self.a]): torch.testing.assert_close(a,b,rtol=0,atol=0)
