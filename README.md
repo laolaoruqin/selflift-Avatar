@@ -1,8 +1,16 @@
 # selflift-Avatar
 
+**当前公开版本：`v0.1.1-experimental`** · [发布说明](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.1-experimental) · [下载 ZIP](https://github.com/slmonker/selflift-Avatar/releases/download/v0.1.1-experimental/selflift-Avatar-v0.1.1-experimental.zip) · [更新记录](CHANGELOG.md)
+
 用于 ComfyUI / MiniMax H3 的 **SelfLift 独立实验分支**，重点适配音视频双流遮罩和原始音频保留。与原版节点使用不同的注册 ID，可以并存。
 
 > **实验版本，非官方项目。** v0.1.1 已通过 28 项 CPU 测试；维护者反馈当前工作流试用可用。尚无系统性的口型准确率、性能或多模型组合验证，不保证所有音频与角色都能准确同步。
+
+## v0.1.1 的重点
+
+上一版能够解析遮罩并保留输出音频，但缺少 H3 原生音频条件标签和模型输入侧的已知音频注入。本版补齐这条路径：让音频在低清与高清采样时都参与条件输入，而不只是最终恢复声音。
+
+同时分离高清阶段的带噪恢复状态和干净音频约束。此修复解决的是条件传递问题，不代表上采样器、模型、提示词或其他设置对口型的影响已经消除。
 
 ## 安装
 
@@ -18,7 +26,11 @@ git clone https://github.com/slmonker/selflift-Avatar.git
 
 ## 更新
 
-Git 安装：在本插件目录执行 `git pull --ff-only`，然后重启 ComfyUI 后端。ZIP 安装：先备份旧插件目录，再用新版文件替换并重启。原版 SelfLift 不需要删除。
+**Git 安装：**在本插件目录执行 `git pull --ff-only`，然后重启 ComfyUI 后端。若有自己的代码修改，请先备份或提交，不要强制覆盖。
+
+**ZIP 安装：**先将旧版备份到 `custom_nodes` 之外，再把新版 `selflift-Avatar` 文件夹放回 `custom_nodes` 并重启。不要将两个 Avatar 副本同时放在 `custom_nodes` 下，以免节点重复注册。原版 SelfLift 使用不同的节点 ID，可以保留。
+
+从 v0.1.0 升级时，已有 Avatar 节点的 ID 和输入接口不变，不需要重新接线；只刷新网页不足以加载新的 Python 代码。
 
 ## 使用
 
@@ -35,6 +47,25 @@ Git 安装：在本插件目录执行 `git pull --ff-only`，然后重启 ComfyU
 | `SelfLiftAvatarH3TST` | selflift-Avatar H3 TST |
 
 音频遮罩仍通过 latent 字典的 `noise_mask` 提供，没有新增单独的 mask 输入端口。
+
+## 使用输入音频驱动角色
+
+典型连接方式如下（节点显示名称可能随 ComfyUI 版本变化）：
+
+```text
+输入音频 → 裁剪到目标片段 → H3 音频 VAE 编码
+                                ↓
+SolidMask(value=0) → SetLatentNoiseMask
+                                ↓
+H3 视频 latent ──────────→ 合并音视频 latent
+                                ↓
+                 selflift-Avatar Sampler (MiniMax H3)
+```
+
+- 音频 mask 为 0 时，保留输入音频；为 1 时，允许生成音频。视频和音频可以使用不同遮罩。
+- 音频长度、视频帧数和最终输出 FPS 应对应同一目标片段。编码音频与最终合成的音频也应来自同一次裁剪。
+- 若最终合成节点直接使用原音频，听到正确声音不等于采样时音频条件正确；判断口型需要看实际生成的视频。
+- 与 H3 条件节点配套连接模型、正负条件及视频 VAE；本插件不是独立的后期对口型工具。
 
 ## 遮罩支持
 
@@ -98,4 +129,6 @@ python tests/test_avatar.py
 
 ## 回退
 
-工作流换回原版节点即可；卸载时关闭 ComfyUI，将本文件夹移出 `custom_nodes`。本项目不会修改原版插件或 ComfyUI 核心文件。
+[v0.1.0-experimental](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.0-experimental) 保留供对比和回退，但不包含本版原生音频条件修复。也可在工作流中换回原版 SelfLift 节点。
+
+卸载时关闭 ComfyUI，将本文件夹移出 `custom_nodes`。本项目不会修改原版插件或 ComfyUI 核心文件。
