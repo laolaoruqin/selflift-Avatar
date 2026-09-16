@@ -197,8 +197,10 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
     if not 0.0 <= w_min <= w_max <= 1.0:
         raise ValueError("selflift-Avatar: weights must satisfy 0 <= w_min <= w_max <= 1")
     noise_masks = _validate_latent_input(latent_image)
-    if highres_tiling and noise_masks is not None:
-        raise ValueError("selflift-Avatar: noise_mask is not compatible with highres_tiling")
+    if highres_tiling:
+        avatar_masks.validate_tiling_masks(noise_masks)
+        if noise_masks is not None:
+            logging.info("[selflift-Avatar tiling] video=generate, audio=fully preserved; full audio conditioning on every spatial tile")
 
     model_sampling = model.get_model_object("model_sampling")
     _validate_sampling(model_sampling, sampler)
@@ -409,7 +411,7 @@ class SelfLiftAvatarH3Sampler:
             "positive": ("CONDITIONING",),
             "negative": ("CONDITIONING",),
             "vae": ("VAE", {"tooltip": "Video VAE used for the pixel re-encode anchor at the resolution transition."}),
-            "latent_image": ("LATENT", {"tooltip": "Target-resolution H3 AV latent defining size and duration. Experimental: accepts existing latents, Tensor masks and H3 NestedTensor video/audio masks. 0 keeps content; 1 generates. Disable highres_tiling when masked."}),
+            "latent_image": ("LATENT", {"tooltip": "Target-resolution H3 AV latent defining size and duration. Experimental: accepts existing latents, Tensor masks and H3 NestedTensor video/audio masks. 0 keeps content; 1 generates. With highres_tiling, masks must be video=1 everywhere and audio=0 everywhere."}),
             "sampler": ("SAMPLER", {"tooltip": "Standard Euler only; SelfLift reuses its transition-step prediction to keep the original NFE count."}),
             "sigmas": ("SIGMAS",),
             "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True}),
@@ -422,7 +424,7 @@ class SelfLiftAvatarH3Sampler:
             "upscaler_model": _upscaler_input(),
         }, "optional": {
             "model_hires": ("MODEL", {"tooltip": "Optional: model used for the high-resolution stage instead of `model` (e.g. a different checkpoint or LoRA stack). Must share the same architecture and latent format. The low-resolution prefix always runs on `model`."}),
-            "highres_tiling": ("BOOLEAN", {"default": False, "label_on": "高分辨率分块：开启", "label_off": "高分辨率分块：关闭", "tooltip": "Experimental: select 1–8 spatial tiles from available memory at high-resolution preparation. Audio input and references remain complete; only the first tile's audio prediction is retained. Quality and speed may change."}),
+            "highres_tiling": ("BOOLEAN", {"default": False, "label_on": "高分辨率分块：开启", "label_off": "高分辨率分块：关闭", "tooltip": "Experimental: auto-select 1–8 spatial tiles (1 means no split). Masks supported only for video=1 everywhere / audio=0 everywhere. Every tile receives complete audio and audio conditioning. Without masks, only the first tile audio prediction is retained. Quality and speed may change."}),
         }}
 
     RETURN_TYPES = ("LATENT",)

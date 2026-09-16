@@ -74,6 +74,16 @@ def _tile_payload(payload, context, video, audio, axis, start, end):
 def _tiled_forward(executor, streams, timestep, context, transformer_options, minimax_payload=None,
                    n_tiles=2, plan=None, **kwargs):
     video, audio = streams
+    # Only the fully generated video / fully preserved audio combination is supported.
+    # A redundant full-frame all-one video condition must not reach a smaller tile.
+    video_mask = kwargs.get("denoise_mask")
+    if video_mask is not None:
+        if not bool((video_mask == 1).all()):
+            raise ValueError("selflift-Avatar: tiled video preservation is not supported")
+        kwargs = {**kwargs, "denoise_mask": None}
+    audio_mask = kwargs.get("audio_denoise_mask")
+    if audio_mask is not None and not bool((audio_mask == 0).all()):
+        raise ValueError("selflift-Avatar: tiled audio conditioning requires a fully preserved audio mask")
     axis = 3 if (video.shape[3] + 1) // 2 >= (video.shape[4] + 1) // 2 else 4
     length = video.shape[axis]
     regions = _regions(length, plan['tiles'] if plan is not None else n_tiles)

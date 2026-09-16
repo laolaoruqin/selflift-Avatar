@@ -1,19 +1,24 @@
 # Changelog
 
+## v0.1.2-experimental — 2026-09-16
+
+- Allow high-resolution tiling for the validated audio-only mask case: video mask all 1, audio mask all 0.
+- Automatically select spatial direction and tile count from available workspace; 1–8 tiles are possible.
+- Forward the complete audio latent and H3 audio conditioning to every video tile.
+- Keep rejecting partial/soft video masks, partial/soft audio masks, dynamic mask schedules, and ControlNet with the H3 tiling path.
+- Add tile-stitching and masked-tiling regression tests; 34 CPU tests pass.
+- Add separate English and Chinese documentation; English README is the repository homepage.
+- Publish the maintainer-provided `_00011-audio.mp4` as a public demo Release asset.
+
 ## v0.1.1-experimental
 
-- 接通 H3 原生音频遮罩条件与模型输入侧音频注入，不再仅恢复输出。
-- 高清恢复采样状态与干净 inpaint anchor 分离。
-- 保留静态遮罩范围、原节点 ID 和原工作流接口。
-- 28 项 CPU 测试通过，新增模型输入和条件标签验证。
-- 维护者反馈当前工作流试用可用；尚无系统性口型质量验证。
-- 首个公开预发布版本，保留 v0.1.0 供回退。
+- Connect H3 native audio conditioning and model-input audio injection instead of only restoring audio after prediction.
+- Separate the high-resolution noisy resume state from the clean inpaint anchor.
+- Preserve dual-stream masks, multi-channel masks, and constant image-sized SolidMask audio compatibility.
+- 28 CPU tests passed; no systematic lip-sync benchmark.
 
 ## v0.1.0-experimental
 
-- 独立注册 Avatar H3、Image、TST 节点，不覆盖原版。
-- 支持 H3 双流遮罩、多通道视频 mask、打包 mask 及音频静态约束。
-- 修正 H3 音频约束的采样尺度转换。
-- 支持附加到音频的恒定图像尺寸 SolidMask，拒绝非恒定图像网格。
-- 修复带遮罩纯像素 anchor 分支。
-- 26 项 CPU 测试通过；真实大模型生成未验证。
+- Independent Avatar H3, Image, and TST node registrations without overriding the original plugin.
+- H3 dual-stream masks, multi-channel video masks, packed masks, and static audio constraints.
+- H3 audio-scale correction and the masked pure pixel-anchor fix.

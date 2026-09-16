@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import logging
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -9,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 PLUGIN = Path(__file__).resolve().parents[1]
-ROOT = PLUGIN.parents[1]
+ROOT = Path(os.environ.get("COMFYUI_ROOT", str(PLUGIN.parents[1])))
 sys.path.insert(0, str(ROOT))
 import comfy.options
 comfy.options.enable_args_parsing()
@@ -18,7 +19,7 @@ spec = importlib.util.spec_from_file_location('selflift_avatar_test', PLUGIN/'__
 plugin = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = plugin
 spec.loader.exec_module(plugin)
-from selflift_avatar_test import nodes, avatar_masks as masks, selflift, avatar_sampling
+from selflift_avatar_test import nodes, avatar_masks as masks, selflift, avatar_sampling, h3_tiling
 import torch
 import comfy.latent_formats
 import comfy.model_base
@@ -181,10 +182,22 @@ class PipelineTests(unittest.TestCase):
         self.stages = []
         self.audio_inputs = []
         self.mask_conds = []
+        self.tile_inputs = []
     def sample(self, model, noise, positive, negative, cfg, device, sampler, sigmas, options,
                latent_image, callback, disable_pbar, seed):
         raw, shapes = comfy.utils.pack_latents(latent_image.unbind())
         eps, _ = comfy.utils.pack_latents(noise.unbind())
+        prepare_wrappers = comfy.patcher_extension.get_all_wrappers(
+            comfy.patcher_extension.WrappersMP.PREPARE_SAMPLING, options, is_model_options=True)
+        if prepare_wrappers:
+            # Exercise the real planner, forcing two tiles without querying GPU memory.
+            def budget(patcher, noise_shape, conds, latent_shapes, regions, axis):
+                minimum = 200 if len(regions) == 1 else 50
+                return noise_shape, latent_shapes[0], 0, minimum, minimum
+            with patch.object(h3_tiling, '_available_workspace', return_value=100),                  patch.object(h3_tiling, '_budget', side_effect=budget):
+                prep = comfy.patcher_extension.WrapperExecutor.new_class_executor(
+                    lambda *a, **kw: None, None, prepare_wrappers)
+                prep.execute(model, raw.shape, {}, model_options=options)
         owner = self
         class Denoiser:
             def __init__(self, inner):
@@ -197,6 +210,16 @@ class PipelineTests(unittest.TestCase):
                                                                    self.inner_model.model_sampling.audio_shift)
                 audio_seen = av[1] * (sigma_a / sigma).reshape(-1,1,1,1)
                 owner.audio_inputs.append(audio_seen.clone())
+                wrappers = comfy.patcher_extension.get_all_wrappers(
+                    comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, model_options, is_model_options=True)
+                if wrappers:
+                    def predict_tile(streams, timestep, context, transformer_options, minimax_payload=None, **kw):
+                        owner.tile_inputs.append((streams[0].shape, streams[1].clone(), kw["audio_denoise_mask"].clone()))
+                        return [torch.full_like(streams[0], .125), torch.full_like(streams[1], .125)]
+                    execute = comfy.patcher_extension.WrapperExecutor.new_class_executor(predict_tile, self, wrappers)
+                    predicted = execute.execute([av[0], audio_seen], sigma * 1000,
+                                                torch.zeros(x.shape[0], 2, 4), {}, **owner.mask_conds[-1])
+                    return comfy.utils.pack_latents(predicted)[0]
                 return torch.full_like(x,.125)
         def outer(noise, latent_image, stage_sampler, sigmas, denoise_mask=None,
                   callback=None, disable_pbar=False, seed=None, latent_shapes=None):
@@ -282,9 +305,78 @@ class PipelineTests(unittest.TestCase):
     def test_pure_anchor_pipeline(self):
         out = self.run_pipeline(NestedTensor([torch.zeros_like(self.v),torch.zeros_like(self.a)]),rho=1.)['samples'].unbind()
         for a,b in zip(out,[self.v,self.a]): torch.testing.assert_close(a,b,rtol=0,atol=0)
+    def test_tiling_full_audio_keep_reaches_every_tile(self):
+        self.v = torch.randn(2,24,3,12,24)
+        original_video, original_audio = self.v.clone(), self.a.clone()
+        result = self.run_pipeline(NestedTensor([torch.ones_like(self.v), torch.zeros(1,1,64,64)]),tiling=True)
+        v, a = result['samples'].unbind()
+        torch.testing.assert_close(a, self.a, rtol=0, atol=0)
+        self.assertFalse(torch.equal(v, self.v))
+        self.assertEqual(self.stages, [2,2])
+        self.assertEqual(len(self.tile_inputs), 4)  # 2 spatial tiles x 2 high-resolution steps
+        for shape, audio, audio_mask in self.tile_inputs:
+            self.assertLess(shape[-1], self.v.shape[-1])
+            self.assertEqual(shape[2], self.v.shape[2])
+            torch.testing.assert_close(audio, self.a, rtol=1e-5, atol=1e-5)
+            self.assertEqual(audio_mask.count_nonzero(), 0)
+            self.assertEqual(audio_mask.shape[-1], self.a.shape[-1])
+        torch.testing.assert_close(self.v, original_video)
+        torch.testing.assert_close(self.a, original_audio)
     def test_tiling_explicitly_rejected(self):
-        with self.assertRaisesRegex(ValueError,'highres_tiling'):
-            self.run_pipeline(torch.ones(1,8,8),tiling=True)
+        for vm, am in [(1.,1.), (0.,0.), (.5,0.), (1.,.5)]:
+            with self.subTest(video_mask=vm, audio_mask=am):
+                with self.assertRaisesRegex(ValueError,'highres_tiling'):
+                    self.run_pipeline(NestedTensor([torch.full((1,1,1,1,1),vm),
+                                                    torch.full((1,1,1,1),am)]),tiling=True)
+    def test_tiling_partial_audio_rejected(self):
+        am = torch.zeros_like(self.a); am[...,-1] = 1
+        with self.assertRaisesRegex(ValueError,'partial audio'):
+            self.run_pipeline(NestedTensor([torch.ones_like(self.v),am]),tiling=True)
+
+
+class TilingTests(unittest.TestCase):
+    def test_mask_gate(self):
+        masks.validate_tiling_masks(None)
+        masks.validate_tiling_masks([torch.ones(1,1,1,1,1),torch.zeros(1,1,1,1)])
+        with self.assertRaises(ValueError):
+            masks.validate_tiling_masks([torch.ones(1,1,1,1,1)])
+    def test_overlap_stitch_full_audio_and_positions(self):
+        for height, width in [(12,33),(33,12)]:
+            for tiles in [1,2,4]:
+                with self.subTest(height=height,width=width,tiles=tiles):
+                    v = torch.randn(1,24,3,height,width)
+                    a = torch.randn(1,32,2,7)
+                    am = torch.zeros(1,1,2,7)
+                    vm = torch.ones(1,1,3,height,width)
+                    calls=[]
+                    def predict(streams,timestep,context,transformer_options,minimax_payload=None,**kwargs):
+                        calls.append(streams[0].shape)
+                        self.assertIs(streams[1],a)
+                        self.assertIs(kwargs['audio_denoise_mask'],am)
+                        self.assertIsNone(kwargs.get('denoise_mask'))
+                        if tiles > 1:
+                            shape = streams[0].shape
+                            signature = minimax_payload['layout'].signature
+                            self.assertEqual(tuple(signature[1:]),(3,(shape[-2]+1)//2*2,(shape[-1]+1)//2*2,7))
+                        return [streams[0]*2,streams[1]*3]
+                    out = h3_tiling._tiled_forward(predict,[v,a],torch.tensor([500.]),torch.zeros(1,2,4),{},
+                                                  plan={'tiles':tiles},denoise_mask=vm,audio_denoise_mask=am)
+                    torch.testing.assert_close(out[0],v*2)
+                    torch.testing.assert_close(out[1],a*3)
+                    self.assertEqual(len(calls),tiles)
+                    self.assertEqual(vm.min(),1.)
+    def test_forward_rejects_video_and_soft_audio_masks(self):
+        v=torch.zeros(1,24,3,12,24);a=torch.zeros(1,32,2,7)
+        for kwargs in [{'denoise_mask':torch.zeros(1,1,3,12,24)},
+                       {'audio_denoise_mask':torch.full((1,1,2,7),.5)}]:
+            with self.assertRaises(ValueError):
+                h3_tiling._tiled_forward(None,[v,a],torch.tensor([500.]),torch.zeros(1,2,4),{},**kwargs)
+    def test_unmasked_forward_still_works(self):
+        v=torch.ones(1,24,3,12,24);a=torch.ones(1,32,2,7)
+        out=h3_tiling._tiled_forward(lambda streams,*args,**kwargs:streams,[v,a],torch.tensor([500.]),
+                                    torch.zeros(1,2,4),{},plan={'tiles':2})
+        torch.testing.assert_close(out[0],v)
+        torch.testing.assert_close(out[1],a)
 
 if __name__ == '__main__':
     unittest.main(argv=[sys.argv[0]], verbosity=2)
