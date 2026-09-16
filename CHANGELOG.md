@@ -8,6 +8,7 @@
 - Keep rejecting partial/soft video masks, partial/soft audio masks, dynamic mask schedules, and ControlNet with the H3 tiling path.
 - Add tile-stitching and masked-tiling regression tests; 34 CPU tests pass.
 - Add separate English and Chinese documentation; English README is the repository homepage.
+- Add a clickable GIF preview and publish the maintainer-provided `_00011-audio.mp4` as a public Release asset.
 - Publish the maintainer-provided `_00011-audio.mp4` as a public demo Release asset.
 
 ## v0.1.1-experimental
