@@ -20,7 +20,13 @@ An independent experimental SelfLift branch for ComfyUI / MiniMax H3. It focuses
 
 **H3 audio-driven demo:** [Download / watch the full 13.67-second MP4](https://github.com/slmonker/selflift-Avatar/releases/download/v0.1.2-experimental/selfliftAvatar_00011-audio.mp4) · [open the v0.1.2 release](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.2-experimental)
 
-The preview above is a muted excerpt; click it for the complete video with audio. The demo was provided by the maintainer and is published as a public Release asset. The repository does not include model weights. It demonstrates one workflow and is not a universal lip-sync benchmark.
+The preview above is a muted excerpt; click it for the complete video with audio. The demo was provided by the maintainer and is published as a public Release asset.
+
+[![SelfLift Avatar workflow demo preview](docs/assets/demo-selflift-avatar-preview.gif)](https://github.com/slmonker/selflift-Avatar/releases/download/v0.1.2-experimental/selflift-Avatar-demo-selflift-avatar.mp4)
+
+**SelfLift Avatar workflow demo:** [Download / watch the full 10.05-second MP4](https://github.com/slmonker/selflift-Avatar/releases/download/v0.1.2-experimental/selflift-Avatar-demo-selflift-avatar.mp4)
+
+This second preview is also muted; click it for the complete video with audio. Both videos are examples of the maintainer's workflows, not universal lip-sync benchmarks. The repository does not include model weights.
 
 ## Installation
 

@@ -20,7 +20,13 @@
 
 **H3 音频驱动 Demo：** [下载 / 查看完整 13.67 秒 MP4](https://github.com/slmonker/selflift-Avatar/releases/download/v0.1.2-experimental/selfliftAvatar_00011-audio.mp4) · [打开 v0.1.2 发布页](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.2-experimental)
 
-上方是静音 GIF 片段，点击即可获取带声音的完整视频。该视频由维护者提供，作为公开 Release 附件发布。仓库不包含模型权重。它只展示一个工作流示例，不代表所有角色和音频都能达到相同的口型效果。
+上方是静音 GIF 片段，点击即可获取带声音的完整视频。该视频由维护者提供，作为公开 Release 附件发布。
+
+[![SelfLift Avatar 工作流 Demo 预览](docs/assets/demo-selflift-avatar-preview.gif)](https://github.com/slmonker/selflift-Avatar/releases/download/v0.1.2-experimental/selflift-Avatar-demo-selflift-avatar.mp4)
+
+**SelfLift Avatar 工作流 Demo：** [下载 / 查看完整 10.05 秒 MP4](https://github.com/slmonker/selflift-Avatar/releases/download/v0.1.2-experimental/selflift-Avatar-demo-selflift-avatar.mp4)
+
+第二个预览同样是静音 GIF，点击即可获取带声音的完整视频。两个视频都只是维护者工作流的示例，不代表所有角色和音频都能达到相同的口型效果。仓库不包含模型权重。
 
 ## 安装
 
