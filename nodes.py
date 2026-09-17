@@ -27,12 +27,14 @@ import comfy.sample
 import comfy.samplers
 import comfy.utils
 import latent_preview
+from server import PromptServer
 
 from . import selflift
 from . import avatar_masks
 from .avatar_sampling import native_mask_model
 from . import h3_upscaler
 from . import h3_tiling
+from .tiling_ui import format_plan
 from . import h3_tst
 from .diagnostics import log_memory
 
@@ -186,7 +188,8 @@ def _debug_dump(vae, latents):
 
 def progressive_sample(model, positive, negative, vae, latent_image, sampler, sigmas, seed, cfg,
                        transition_step, lowres_scale, rho, w_min, w_max, latent_upsample, latent_lifter=None,
-                       highres_tiling=False, model_hires=None):
+                       highres_tiling=False, model_hires=None, tiling_mode="auto", tiling_tiles=2,
+                       tiling_axis="auto", on_tiling_plan=None):
     _validate_schedule(sigmas, transition_step)
     if sigmas.numel() < 2:
         return latent_image
@@ -198,6 +201,7 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
         raise ValueError("selflift-Avatar: weights must satisfy 0 <= w_min <= w_max <= 1")
     noise_masks = _validate_latent_input(latent_image)
     if highres_tiling:
+        h3_tiling.validate_options(tiling_mode, tiling_tiles, tiling_axis)
         avatar_masks.validate_tiling_masks(noise_masks)
         if noise_masks is not None:
             logging.info("[selflift-Avatar tiling] video=generate, audio=fully preserved; full audio conditioning on every spatial tile")
@@ -209,7 +213,9 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
         model, latent_image["samples"], latent_image.get("downscale_ratio_spacial", None),
         latent_image.get("downscale_ratio_temporal", None)))
     hires_base = model_hires if model_hires is not None else model
-    high_model = h3_tiling.tiled_model(hires_base, [tuple(stream.shape) for stream in streams]) if highres_tiling else hires_base
+    high_model = h3_tiling.tiled_model(hires_base, [tuple(stream.shape) for stream in streams],
+                                         mode=tiling_mode, tiles=tiling_tiles, axis=tiling_axis,
+                                         on_plan=on_tiling_plan) if highres_tiling else hires_base
     video = streams[0].ndim == 5
     if video:
         b, c, t, H, W = streams[0].shape
@@ -381,7 +387,7 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
 
     high_timer = _StageTimer("high_resolution", model.load_device, (H, W), resolution_scale)
     if highres_tiling:
-        logging.info("[selflift-Avatar plan] automatic high-resolution tiling enabled; preparation selects the tile count")
+        logging.info("[selflift-Avatar plan] high-resolution tiling enabled; mode=%s axis=%s", tiling_mode, tiling_axis)
     out = comfy.samplers.sample(high_model, resume_noise, positive, negative, cfg, model.load_device,
                                 sampler, sigmas[transition_step:], high_model.model_options,
                                 latent_image=resume_latent, callback=callback_high,
@@ -424,15 +430,19 @@ class SelfLiftAvatarH3Sampler:
             "upscaler_model": _upscaler_input(),
         }, "optional": {
             "model_hires": ("MODEL", {"tooltip": "Optional: model used for the high-resolution stage instead of `model` (e.g. a different checkpoint or LoRA stack). Must share the same architecture and latent format. The low-resolution prefix always runs on `model`."}),
-            "highres_tiling": ("BOOLEAN", {"default": False, "label_on": "高分辨率分块：开启", "label_off": "高分辨率分块：关闭", "tooltip": "Experimental: auto-select 1–8 spatial tiles (1 means no split). Masks supported only for video=1 everywhere / audio=0 everywhere. Every tile receives complete audio and audio conditioning. Without masks, only the first tile audio prediction is retained. Quality and speed may change."}),
-        }}
+            "highres_tiling": ("BOOLEAN", {"default": False, "label_on": "高分辨率分块：开启", "label_off": "高分辨率分块：关闭", "tooltip": "Experimental: spatial tiling; auto/manual controls below. 1 tile means no split. Masks supported only for video=1 everywhere / audio=0 everywhere. Every tile receives complete audio and audio conditioning. Without masks, only the first tile audio prediction is retained. Quality and speed may change."}),
+            "tiling_mode": (["auto", "manual"], {"default": "auto", "tooltip": "auto 自动: choose 1–8 tiles using memory estimates. manual 手动: use tiling_tiles, no automatic increase. Only active when highres_tiling is on."}),
+            "tiling_tiles": ([2, 3, 4, 6, 8], {"default": 2, "tooltip": "手动块数 / Manual tiles: 2, 3, 4, 6, 8. Ignored in auto mode. Turn highres_tiling off for full-frame processing. Small dimensions can reduce the effective count. Does not guarantee enough VRAM."}),
+            "tiling_axis": (["auto", "width", "height"], {"default": "auto", "tooltip": "分块方向 / Spatial direction: auto = longer patch-grid side; width = left/right strips; height = top/bottom strips. Used by both auto and manual modes; audio/time are not split."}),
+        }, "hidden": {"unique_id": "UNIQUE_ID"}}
 
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "sample"
     CATEGORY = "selflift-Avatar"
 
     def sample(self, model, positive, negative, vae, latent_image, sampler, sigmas, seed, cfg,
-               transition_step, lowres_scale, rho, w_min, w_max, upscaler_model, model_hires=None, highres_tiling=False):
+               transition_step, lowres_scale, rho, w_min, w_max, upscaler_model, model_hires=None, highres_tiling=False,
+               tiling_mode="auto", tiling_tiles=2, tiling_axis="auto", unique_id=None):
         if rho == 0.0 and upscaler_model == "none":
             raise ValueError(
                 "SelfLift H3: rho=0 with upscaler_model=none disables both SelfLift-zero correction "
@@ -443,9 +453,35 @@ class SelfLiftAvatarH3Sampler:
             if rho > 0.0 and w_max > 0.0:
                 logging.warning("SelfLift H3: rho > 0 with an external upscaler is a hybrid experiment; select upscaler_model=none to test the paper's SelfLift-zero direct route")
             lifter = lambda z, hw: h3_upscaler.learned_latent_lift(z, hw, upscaler_model)
-        return (progressive_sample(model, positive, negative, vae, latent_image, sampler, sigmas, seed, cfg,
-                                   transition_step, lowres_scale, rho, w_min, w_max, "nearest",
-                                   latent_lifter=lifter, highres_tiling=highres_tiling, model_hires=model_hires),)
+        summary = "Preparing / 准备中: {} | axis={} | tiles={}\nActual plan appears at high-resolution preparation / 高清阶段准备时显示实际方案".format(
+            tiling_mode, tiling_axis, tiling_tiles if tiling_mode == "manual" else "auto") if highres_tiling else "OFF / 高分辨率空间分块已关闭"
+        last_plan = None
+
+        def send_status(text):
+            server = getattr(PromptServer, "instance", None)
+            if unique_id is not None and server is not None and server.client_id is not None:
+                server.send_sync("selflift-avatar-tiling", {"node_id": str(unique_id), "text": text, "plan": last_plan}, server.client_id)
+
+        def report(plan):
+            nonlocal summary, last_plan
+            last_plan = plan
+            summary = format_plan(plan)
+            send_status("RUNNING / 高清采样中\n" + summary)
+
+        send_status(summary)
+        try:
+            output = progressive_sample(model, positive, negative, vae, latent_image, sampler, sigmas, seed, cfg,
+                                        transition_step, lowres_scale, rho, w_min, w_max, "nearest",
+                                        latent_lifter=lifter, highres_tiling=highres_tiling, model_hires=model_hires,
+                                        tiling_mode=tiling_mode, tiling_tiles=tiling_tiles, tiling_axis=tiling_axis,
+                                        on_tiling_plan=report)
+        except Exception:
+            send_status("FAILED / 运行失败：以下不是成功结果；详见错误报告\n" + summary)
+            raise
+        if highres_tiling and last_plan is None:
+            summary = "NOT RUN / 本次未执行高清分块规划（例如空采样日程）"
+        summary = "DONE / 上次运行完成\n" + summary
+        return {"ui": {"selflift_tiling": [summary], "selflift_tiling_plan": [last_plan]}, "result": (output,)}
 
 
 class SelfLiftAvatarImageSampler:
