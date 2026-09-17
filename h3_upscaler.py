@@ -8,6 +8,7 @@ lifter described by the paper. The checkpoint is expected under
 ComfyUI/models/latent_upscale_models/.
 """
 
+import gc
 import logging
 import os
 
@@ -173,6 +174,8 @@ class LatentResizer3D(nn.Module):
         B, C, T, H, W = x.shape
 
         chunk, overlap = self.temporal_chunk_settings()
+        if size[-2] * size[-1] >= 60 * 60:
+            chunk = 6
 
         if not enable_chunking or T <= chunk:
             return self._forward_seg(x, scale, size)
@@ -207,6 +210,8 @@ class LatentResizer3D(nn.Module):
             weight_full[:, :, out_start:out_end] += weight.view(1, 1, n_valid, 1, 1)
 
             del seg, seg_out, valid_out
+            if x.device.type == "cuda":
+                torch.cuda.empty_cache()
 
         return out_full / weight_full.clamp(min=1e-8)
 
@@ -357,11 +362,19 @@ def learned_latent_lift(z0_low, out_hw, model_name, device=None):
     scale = (H / h + W / w) / 2.0
 
     log_memory("upscaler before_load", device)
+    comfy.model_management.unload_all_models()
+    comfy.model_management.soft_empty_cache()
+    gc.collect()
+
     patcher = _load_model(model_name, device)
     model = patcher.model
     memory_required = _inference_memory_required(model, z0_low, (H, W))
+    if H * W >= 60 * 60:
+        memory_required = max(memory_required, 10 * 1024 * 1024 * 1024)
     length = z0_low.shape[2]
     chunk, overlap = model.temporal_chunk_settings()
+    if H * W >= 60 * 60:
+        chunk = 6
     identity = (H, W) == (h, w)
     chunked = not identity and length > chunk
     windows = list(_temporal_windows(length, chunk, overlap)) if chunked else []
@@ -386,5 +399,10 @@ def learned_latent_lift(z0_low, out_hw, model_name, device=None):
         x = (x - mean) / std
         out = model(x, scale=scale, target_size=(z0_low.shape[2], H, W))
         out = (out * std + mean).float().to(comfy.model_management.intermediate_device())
+        del x
+
+    patcher.model.to("cpu")
+    comfy.model_management.soft_empty_cache()
+    gc.collect()
     log_memory("upscaler end", device)
     return out
