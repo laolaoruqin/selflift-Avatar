@@ -1,12 +1,27 @@
 # selflift-Avatar
 
-**Current public development version: `v0.1.2-experimental`** · [中文说明](README_CN.md) · [Changelog](CHANGELOG.md) · [v0.1.2 release](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.2-experimental)
+**Current public development version: `v0.1.3-experimental`** · [中文说明](README_CN.md) · [Changelog](CHANGELOG.md) · [v0.1.3 release](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.3-experimental)
 
 An independent experimental SelfLift branch for ComfyUI / MiniMax H3. It focuses on H3 audio-video latent masks, preserving source audio during sampling, and a narrowly supported high-resolution tiling path. It registers separate node IDs, so it can coexist with the original SelfLift plugin.
 
-> **Experimental, unofficial project.** The v0.1.2 code has passed 34 CPU tests and has been exercised in the maintainer's H3 workflow. This is not a systematic benchmark of lip-sync accuracy, speed, or every model/plugin combination. Results can vary by character, audio, prompt, sampler, latent upscaler, and seed.
+> **Experimental, unofficial project.** The current code has passed 47 CPU tests and frontend callback tests with a stub DOM. Earlier versions were exercised in the maintainer's H3 workflow; the new controls still need broader real-model and frontend testing. This is not a systematic benchmark of lip-sync accuracy, speed, or every model/plugin combination. Results can vary by character, audio, prompt, sampler, latent upscaler, and seed.
 
-## What changed in v0.1.2
+## Selectable spatial tiling — v0.1.3
+
+The H3 sampler now exposes optional controls. Existing workflows keep the old defaults.
+
+| Control | Values | Meaning |
+| --- | --- | --- |
+| `highres_tiling` | false / true | Enable spatial tiling; off ignores the controls below. |
+| `tiling_mode` | auto / manual | Auto selects the first estimated fitting count from 1–8. Manual uses the requested count without silently increasing it. |
+| `tiling_tiles` | 2 / 4 / 6 / 8 (default 2) | Manual dropdown. Turn off highres_tiling for full-frame processing. Tiny dimensions may reduce the effective count. |
+| `tiling_axis` | auto / width / height | Auto uses the longer patch-grid side. Width creates left/right strips; height creates top/bottom strips. Applies in both modes. |
+
+The node includes a read-only status panel: current settings, last actual plan, effective tile count, spatial ranges, overlaps, maximum latent tile, and estimated available/minimum workspace. It updates at high-resolution preparation; before that the automatic result is unknown. Root-graph nodes receive a live event; completion/cached execution uses the ordinary node UI result. Subgraph live-event routing is not verified. Changing controls invalidates the displayed previous plan. Values are estimates, not measured VRAM peaks; manual mode does not guarantee fit or retry on OOM.
+
+Overlap remains automatic; these controls do not change the latent upscaler's temporal windows. The video-all-1/audio-all-0 mask restriction and existing ControlNet/TST limitations remain. Restart the backend and hard-refresh the frontend after updating. If an old node does not show new controls, recreate that H3 sampler node. The 47 CPU tests include the old workflow defaults, manual direction/count, effective-count reporting, insufficient-memory warnings, and node UI results. Frontend callbacks are tested with a stub DOM; this is not a full browser or real-model benchmark.
+
+## Inherited audio-only tiling support (v0.1.2)
 
 - Allows high-resolution tiling when the video is fully generated (`video mask = 1` everywhere) and the source audio is fully preserved (`audio mask = 0` everywhere).
 - Automatically chooses the spatial tile count and direction from available workspace; the current planner can select 1–8 tiles.
@@ -84,7 +99,13 @@ H3 video latent ───────────────→ concatenate AV 
 
 ## High-resolution tiling
 
-Set `highres_tiling=true` to enable the automatic high-resolution spatial tiling planner. The planner chooses the direction and number of tiles based on available workspace; it may choose one tile, which means no actual split.
+Set `highres_tiling=true` to enable high-resolution spatial tiling. Choose `tiling_mode=auto` for estimated-memory planning, or `tiling_mode=manual` for a **2 / 4 / 6 / 8** tile dropdown. Auto mode still considers counts from 1–8 (including odd counts) and may choose one tile, meaning no split. `tiling_axis` can override the direction in either mode. Disable `highres_tiling` for full-frame processing without the tiling planner.
+
+Example: `highres_tiling=true`, `tiling_mode=manual`, `tiling_tiles=4`, `tiling_axis=width` requests four left/right spatial strips. Overlap remains automatic. Manual mode warns if the estimate exceeds available workspace, but does not silently increase the count and does not retry on OOM.
+
+### VRAM estimates are not fixed GPU requirements
+
+There is no reliable mapping such as “2 tiles = 32 GB” or “4 tiles = 24 GB”. The planner combines current free VRAM and estimated reclaimable weights, subtracts reservations, then compares that estimated workspace against the model's estimated minimum needs. Resolution, duration, batch, references, audio, model offloading, and overlapping tiles all affect the result. The node panel shows these **estimates**, not measured peaks. Planning happens before high-resolution sampling, not continuously at every step. No percentage-saving or speed guarantee is claimed.
 
 ### Supported masked tiling mode
 
@@ -101,19 +122,18 @@ Every video tile receives the complete audio latent and complete H3 audio condit
 
 - Any video mask containing 0 or soft values.
 - Partial or soft audio masks.
-- Dynamic `denoise_mask_function` schedules.
 - ControlNet with the H3 tiling path.
 
-Disable `highres_tiling` for those workflows. Removing the validation would not make those combinations correct because their masks would also need to be cropped, transformed, and aligned with each tile.
+Static masks only: upstream dynamic `denoise_mask_function` schedules are ignored with a warning in both modes. Disabling tiling does not restore dynamic-mask support. Disable `highres_tiling` for the unsupported spatial-mask/ControlNet combinations above. Removing the validation would not make those combinations correct because their masks would also need to be cropped, transformed, and aligned with each tile.
 
 Look for these console messages to confirm the planner:
 
 ```text
 [selflift-Avatar plan] automatic high-resolution tiling enabled
-[SelfLift tiling plan] axis=W tiles=4
+[SelfLift tiling plan] mode=manual axis=W tiles=4 requested=4 ...
 ```
 
-`axis=H` or `axis=W` is the selected spatial direction. `tiles=N` is the automatically selected tile count.
+`axis=H` or `axis=W` is the actual spatial direction. `tiles=N` is the effective tile count; `requested` is the manual request or `auto`. Tiny dimensions can reduce the effective count. The node status panel reports the same actual plan once high-resolution preparation begins.
 
 ## Mask support without tiling
 
@@ -142,7 +162,13 @@ Run with the ComfyUI Python environment:
 python tests/test_avatar.py
 ```
 
-The current suite contains 34 CPU tests covering AV packing, H3 audio scaling, full/partial masks, constant audio SolidMask conversion, native audio conditioning, two-stage sampling, automatic tile planning, tile stitching, complete-audio forwarding to every tile, invalid masked-tiling combinations, and the unmasked tiling path. The tests do not load a large H3 checkpoint or measure final video lip-sync quality.
+Optional frontend callback checks (Node.js, no npm packages):
+
+```bash
+node tests/test_tiling_ui.mjs
+```
+
+The current suite contains 47 CPU tests covering AV packing, H3 audio scaling, full/partial masks, constant audio SolidMask conversion, native audio conditioning, two-stage sampling, automatic tile planning, tile stitching, complete-audio forwarding to every tile, invalid masked-tiling combinations, and the unmasked tiling path. The tests do not load a large H3 checkpoint or measure final video lip-sync quality.
 
 ## Source and licensing
 
@@ -152,4 +178,4 @@ The upstream repository did not declare a license at the time this project was p
 
 ## Rollback
 
-[v0.1.1-experimental](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.1-experimental) remains available for comparison. You can also reconnect the original SelfLift node in the workflow. To uninstall, stop ComfyUI and move this folder out of `custom_nodes`.
+[v0.1.2-experimental](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.2-experimental) remains available for comparison. You can also reconnect the original SelfLift node in the workflow. To uninstall, stop ComfyUI and move this folder out of `custom_nodes`.

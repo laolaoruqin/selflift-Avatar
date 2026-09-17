@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.3-experimental — 2026-09-17
+
+- Add backward-compatible auto/manual tile count and direction controls to the H3 sampler.
+- Manual dropdown offers 2, 4, 6, 8 (default 2); auto retains the original 1–8 search.
+- Keep English as the homepage and update the separate Chinese README, including VRAM estimation caveats.
+- Show actual spatial plan, estimated memory and errors in a read-only node panel.
+- Keep overlaps automatic and preserve the full-audio mask restriction.
+- 47 CPU tests and frontend callback tests with a stub DOM passed; real model and live frontend verification pending.
+
 ## v0.1.2-experimental — 2026-09-16
 
 - Allow high-resolution tiling for the validated audio-only mask case: video mask all 1, audio mask all 0.
@@ -9,7 +18,6 @@
 - Add tile-stitching and masked-tiling regression tests; 34 CPU tests pass.
 - Add separate English and Chinese documentation; English README is the repository homepage.
 - Add a clickable GIF preview and publish the maintainer-provided `_00011-audio.mp4` as a public Release asset.
-- Publish the maintainer-provided `_00011-audio.mp4` as a public demo Release asset.
 - Publish the additional maintainer-provided `Selflift Avatar demo.mp4` as a public demo Release asset.
 
 ## v0.1.1-experimental

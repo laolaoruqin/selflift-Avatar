@@ -243,7 +243,7 @@ class PipelineTests(unittest.TestCase):
         executor = comfy.patcher_extension.WrapperExecutor.new_class_executor(outer,SimpleNamespace(model_patcher=model),wrappers)
         out = executor.execute(eps,raw,sampler,sigmas,None,callback,disable_pbar,seed,latent_shapes=shapes)
         return NestedTensor(comfy.utils.unpack_latents(out,shapes))
-    def run_pipeline(self, mask, rho=0., tiling=False):
+    def run_pipeline(self, mask, rho=0., tiling=False, **tiling_options):
         latent = {'samples':NestedTensor([self.v,self.a]), 'tag':'preserved'}
         if mask is not None:
             latent['noise_mask'] = mask
@@ -255,7 +255,7 @@ class PipelineTests(unittest.TestCase):
              patch.object(nodes,'log_memory'), \
              patch.object(nodes.selflift,'paired_lifts',side_effect=lift):
             return nodes.progressive_sample(Patcher(),[],[],None,latent,comfy.samplers.sampler_object('euler'),
-                torch.tensor([1.,.75,.5,.25,0.]),42,1.,2,.5,rho,1.,1.,'nearest',highres_tiling=tiling)
+                torch.tensor([1.,.75,.5,.25,0.]),42,1.,2,.5,rho,1.,1.,'nearest',highres_tiling=tiling, **tiling_options)
     def test_all_zero_av_is_preserved(self):
         out = self.run_pipeline(NestedTensor([torch.zeros_like(self.v),torch.zeros_like(self.a)]))
         v,a = out['samples'].unbind()
@@ -328,6 +328,20 @@ class PipelineTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'highres_tiling'):
                     self.run_pipeline(NestedTensor([torch.full((1,1,1,1,1),vm),
                                                     torch.full((1,1,1,1),am)]),tiling=True)
+    def test_manual_height_pipeline(self):
+        self.v = torch.randn(2,24,3,24,36)
+        reports=[]
+        result=self.run_pipeline(NestedTensor([torch.ones_like(self.v),torch.zeros_like(self.a)]),
+                                 tiling=True,tiling_mode="manual",tiling_tiles=3,tiling_axis="height",
+                                 on_tiling_plan=reports.append)
+        self.assertEqual(reports[-1]['axis'],3)
+        self.assertEqual(reports[-1]['tiles'],3)
+        self.assertEqual(len(self.tile_inputs),6)
+        for shape,audio,mask in self.tile_inputs:
+            self.assertLess(shape[-2],24)
+            self.assertEqual(shape[-1],36)
+            torch.testing.assert_close(audio,self.a,rtol=1e-5,atol=1e-5)
+        torch.testing.assert_close(result['samples'].unbind()[1],self.a,rtol=0,atol=0)
     def test_tiling_partial_audio_rejected(self):
         am = torch.zeros_like(self.a); am[...,-1] = 1
         with self.assertRaisesRegex(ValueError,'partial audio'):
@@ -377,6 +391,90 @@ class TilingTests(unittest.TestCase):
                                     torch.zeros(1,2,4),{},plan={'tiles':2})
         torch.testing.assert_close(out[0],v)
         torch.testing.assert_close(out[1],a)
+
+class TilingControlTests(unittest.TestCase):
+    def plan(self, mode="auto", tiles=2, axis="auto", shape=(1,24,3,12,24), available=100):
+        audio=(1,32,2,7)
+        config={'mode':mode,'requested_tiles':tiles,'axis_choice':axis}
+        reported=[]
+        def budget(model,noise_shape,conds,shapes,regions,dimension):
+            tile=list(shapes[0]); tile[dimension]=max(b-a for a,b in regions)
+            minimum=240/len(regions)
+            return noise_shape,tuple(tile),0,minimum*2,minimum
+        with patch.object(h3_tiling,'_available_workspace',return_value=available),              patch.object(h3_tiling,'_budget',side_effect=budget):
+            h3_tiling._prepare_tiled_sampling(lambda *a,**kw:None,Patcher(),
+                (shape[0],1,torch.tensor(shape[1:]).prod().item()+32*2*7),{},
+                latent_shapes=[shape,audio],plan=config,on_plan=reported.append)
+        self.assertEqual(reported[-1],config)
+        return config
+    def test_auto_uses_first_fitting_count(self):
+        plan=self.plan()
+        self.assertEqual(plan['tiles'],3)
+        self.assertEqual(plan['axis'],4)
+        self.assertTrue(plan['estimate_fits'])
+    def test_manual_count_not_increased_when_insufficient(self):
+        plan=self.plan(mode="manual",tiles=2,axis="height",available=1)
+        self.assertEqual(plan['tiles'],2)
+        self.assertEqual(plan['axis'],3)
+        self.assertFalse(plan['estimate_fits'])
+    def test_manual_one_is_full_frame(self):
+        plan=self.plan(mode="manual",tiles=1)
+        self.assertEqual(plan['regions'],[(0,24)])
+    def test_tiny_size_reports_actual_count(self):
+        plan=self.plan(mode="manual",tiles=8,axis="height",shape=(1,24,3,4,40))
+        self.assertEqual(plan['requested_tiles'],8)
+        self.assertEqual(plan['tiles'],1)
+    def test_auto_axis_can_be_overridden(self):
+        self.assertEqual(self.plan(axis="height")['axis'],3)
+    def test_no_fit_reports_warning_at_max(self):
+        plan=self.plan(shape=(1,24,3,68,120),available=1)
+        self.assertEqual(plan['tiles'],8)
+        self.assertFalse(plan['estimate_fits'])
+    def test_invalid_options(self):
+        for mode,n,axis in [('other',2,'auto'),('manual',9,'auto'),('manual',0,'auto'),('manual',2,'time')]:
+            with self.assertRaises(ValueError):
+                h3_tiling.validate_options(mode,n,axis)
+    def test_report_displays_estimates_and_overlap(self):
+        text=nodes.format_plan(self.plan(mode="manual",tiles=4,shape=(1,24,107,68,120)))
+        self.assertIn('[22,68)',text)
+        self.assertIn('[16, 16, 16]',text)
+        self.assertIn('非实测峰值',text)
+    def test_schema_backward_defaults(self):
+        schema=nodes.SelfLiftAvatarH3Sampler.INPUT_TYPES()
+        self.assertEqual(schema['optional']['tiling_mode'][1]['default'],'auto')
+        self.assertEqual(schema['optional']['tiling_tiles'][1]['default'],2)
+        self.assertEqual(schema['optional']['tiling_tiles'][0],[2,4,6,8])
+        self.assertTrue(all(type(n) is int for n in schema['optional']['tiling_tiles'][0]))
+        self.assertEqual(schema['optional']['tiling_axis'][1]['default'],'auto')
+        self.assertEqual(schema['hidden']['unique_id'],'UNIQUE_ID')
+    def test_node_returns_latent_and_ui_for_old_call(self):
+        output={'samples':torch.zeros(1)}
+        with patch.object(nodes,'progressive_sample',return_value=output) as sample:
+            result=nodes.SelfLiftAvatarH3Sampler().sample(None,[],[],None,output,None,None,1,1.,2,.5,.5,.5,1.,'none')
+        self.assertIs(result['result'][0],output)
+        self.assertIn('OFF',result['ui']['selflift_tiling'][0])
+        self.assertEqual(sample.call_args.kwargs['tiling_mode'],'auto')
+    def test_node_plan_event_and_final_ui(self):
+        plan=self.plan(mode="manual",tiles=2)
+        events=[]
+        server=SimpleNamespace(client_id='test-client',send_sync=lambda *a:events.append(a))
+        def sample(*a,**kw):
+            kw['on_tiling_plan'](plan)
+            return {'samples':torch.zeros(1)}
+        with patch.object(nodes.PromptServer,'instance',server,create=True),              patch.object(nodes,'progressive_sample',side_effect=sample):
+            result=nodes.SelfLiftAvatarH3Sampler().sample(None,[],[],None,{},None,None,1,1.,2,.5,.5,.5,1.,'none',
+                highres_tiling=True,tiling_mode='manual',tiling_tiles=2,unique_id='78')
+        self.assertIn('Effective',result['ui']['selflift_tiling'][0])
+        self.assertEqual(events[-1][0],'selflift-avatar-tiling')
+        self.assertEqual(events[-1][1]['node_id'],'78')
+        self.assertEqual(events[-1][2],'test-client')
+    def test_node_failure_event_not_success(self):
+        events=[]
+        server=SimpleNamespace(client_id='test-client',send_sync=lambda *a:events.append(a))
+        with patch.object(nodes.PromptServer,'instance',server,create=True),              patch.object(nodes,'progressive_sample',side_effect=ValueError('test failure')):
+            with self.assertRaisesRegex(ValueError,'test failure'):
+                nodes.SelfLiftAvatarH3Sampler().sample(None,[],[],None,{},None,None,1,1.,2,.5,.5,.5,1.,'none',unique_id='78')
+        self.assertIn('FAILED',events[-1][1]['text'])
 
 if __name__ == '__main__':
     unittest.main(argv=[sys.argv[0]], verbosity=2)

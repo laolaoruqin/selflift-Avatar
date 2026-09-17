@@ -1,12 +1,29 @@
 # selflift-Avatar
 
-**当前公开开发版本：`v0.1.2-experimental`** · [English README](README.md) · [更新记录](CHANGELOG.md) · [v0.1.2 发布页](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.2-experimental)
+**当前公开开发版本：`v0.1.3-experimental`** · [English README](README.md) · [更新记录](CHANGELOG.md) · [v0.1.3 发布页](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.3-experimental)
 
 这是一个面向 ComfyUI / MiniMax H3 的 SelfLift 独立实验分支，重点处理 H3 音视频 latent 遮罩、采样过程中的原始音频保留，以及一个有限制的高分辨率自动分块路径。它使用独立的节点 ID，可以和原版 SelfLift 共存。
 
-> **实验版本，非官方项目。** v0.1.2 已通过 34 项 CPU 测试，并在维护者的 H3 工作流中试用。尚未进行系统性的口型准确率、速度和所有模型/插件组合测试。不同角色、音频、提示词、采样器、latent upscaler 和 seed 可能产生不同结果。
+> **实验版本，非官方项目。** 当前代码已通过 47 项 CPU 测试和模拟 DOM 前端回调测试。此前版本已在维护者的 H3 工作流中试用；新控件仍需更多真实模型与前端测试。尚未进行系统性的口型准确率、速度和所有模型/插件组合测试。不同角色、音频、提示词、采样器、latent upscaler 和 seed 可能产生不同结果。
 
-## v0.1.2 更新内容
+## v0.1.3：可选空间分块策略
+
+H3 采样器新增可选参数，旧工作流保持原有默认行为。
+
+| 控件 | 选项 | 作用 |
+| --- | --- | --- |
+| `highres_tiling` | false / true | 总开关，关闭时忽略下方分块设置。 |
+| `tiling_mode` | auto / manual | 自动：从 1～8 块中选择首个估计能放下的方案；手动：按请求块数，不悄悄增加块数。 |
+| `tiling_tiles` | 2 / 4 / 6 / 8，默认 2 | 仅手动有效。整图处理请关闭 highres_tiling；空间尺寸很小时，实际块数可能减少。 |
+| `tiling_axis` | auto / width / height | 自动沿 patch 网格长边；width 左右分条；height 上下分条。自动和手动模式均有效。 |
+
+节点新增只读状态栏：当前设置、上次实际方案、有效块数、空间范围、重叠区域、最大 latent 块，以及可用/最低工作区估算。高清准备阶段才产生实际方案；之前不会伪造自动块数。普通根图节点会收到运行中事件，完成或缓存执行时通过标准节点 UI 结果显示；子图中的实时事件显示尚未验证。修改选项会清除旧方案，提示重新运行。
+
+显存数字不是实测峰值，手动模式不能保证不爆显存，也没有 OOM 自动重试。重叠范围仍然自动处理，这些参数不改变 latent upscaler 的时间窗口。视频全 1、音频全 0 的遮罩限制，以及 ControlNet/TST 限制不变。
+
+安装后重启后端并强制刷新网页；若旧节点不显示新字段，可重新添加 H3 采样器节点。47 项 CPU 测试覆盖旧工作流默认值、手动方向和块数、实际块数显示、显存估算不足警告及节点 UI 返回。前端回调使用模拟 DOM 测试，不等于完整浏览器或真实大模型效果验证。
+
+## 沿用 v0.1.2 的音频遮罩分块支持
 
 - 当视频全量生成（`video mask` 全为 1）、输入音频全量保留（`audio mask` 全为 0）时，允许开启高分辨率分块。
 - 根据可用工作区自动选择分块方向和数量，当前规划器可选择 1～8 块。
@@ -84,7 +101,13 @@ H3 视频 latent ───────────────→ 合并 AV late
 
 ## 高分辨率分块
 
-打开 `highres_tiling=true` 后，插件会自动规划高分辨率空间分块。规划器根据可用工作区选择方向和块数；也可能选择 1 块，这表示当前不需要实际拆分。
+打开 `highres_tiling=true` 后，用 `tiling_mode=auto` 自动估算块数，或者用 `tiling_mode=manual` 从 **2 / 4 / 6 / 8** 下拉菜单手动选择。自动模式仍会尝试 1～8 块（包括奇数），可能选择 1 块，即不实际拆分。两种模式都可用 `tiling_axis` 指定方向。需要整图处理时，直接关闭 `highres_tiling`。
+
+例如：`highres_tiling=true`、`tiling_mode=manual`、`tiling_tiles=4`、`tiling_axis=width` 表示请求左右分成 4 条。重叠区域仍自动处理。手动模式在估算显存不足时会警告，但不会偷偷增加块数，也不会在 OOM 后自动重试。
+
+### 不把块数绑定到固定显卡容量
+
+不存在可靠的“2 块需要 32GB、4 块需要 24GB”对应表。规划器综合当前空闲显存和预计可回收的权重显存，扣除预留量，再与模型估计的最低需求比较。分辨率、时长、批次、参考图、音频、权重卸载和重叠范围都会影响结果。节点显示的是**估算工作区，不是实测总显存峰值**。方案在高清准备阶段计算，不会每一步动态重算。本项目不承诺固定的显存节省比例或速度提升。
 
 ### 当前支持的带遮罩分块模式
 
@@ -101,19 +124,18 @@ H3 视频 latent ───────────────→ 合并 AV late
 
 - 视频遮罩中存在 0 或软值；
 - 音频局部遮罩或软遮罩；
-- 动态 `denoise_mask_function`；
 - H3 分块路径与 ControlNet 组合。
 
-这些工作流请关闭 `highres_tiling`。直接删除校验并不能让它们正确运行，因为对应遮罩还需要按 tile 裁剪、变换并对齐。
+仅支持静态遮罩：上游动态 `denoise_mask_function` 在两种模式下都会被忽略并输出警告，关闭分块不会恢复动态遮罩支持。上述空间遮罩和 ControlNet 组合请关闭 `highres_tiling`。直接删除校验并不能让它们正确运行，因为对应遮罩还需要按 tile 裁剪、变换并对齐。
 
 在控制台中看到以下日志即可确认规划器：
 
 ```text
 [selflift-Avatar plan] automatic high-resolution tiling enabled
-[SelfLift tiling plan] axis=W tiles=4
+[SelfLift tiling plan] mode=manual axis=W tiles=4 requested=4 ...
 ```
 
-`axis=H` 或 `axis=W` 表示分块方向，`tiles=N` 表示自动选择的分块数量。
+`axis=H` 或 `axis=W` 表示实际方向，`tiles=N` 表示有效块数，`requested` 表示手动请求值或 auto。空间尺寸过小时，实际块数可能减少。节点只读状态栏在高清准备阶段显示同一实际方案。
 
 ## 不使用分块时的遮罩支持
 
@@ -142,7 +164,13 @@ H3 视频 latent ───────────────→ 合并 AV late
 python tests/test_avatar.py
 ```
 
-当前共有 34 项 CPU 测试，覆盖音视频打包、H3 音频尺度、全量/局部遮罩、恒定音频 SolidMask 转换、原生音频条件、两阶段采样、自动分块规划、分块拼接、每个分块获得完整音频、非法遮罩组合和无遮罩分块路径。测试不会加载大型 H3 权重，也不衡量最终视频的口型质量。
+可选前端回调测试（需要 Node.js，无需安装 npm 包）：
+
+```bash
+node tests/test_tiling_ui.mjs
+```
+
+当前共有 47 项 CPU 测试，覆盖音视频打包、H3 音频尺度、全量/局部遮罩、恒定音频 SolidMask 转换、原生音频条件、两阶段采样、自动分块规划、分块拼接、每个分块获得完整音频、非法遮罩组合和无遮罩分块路径。测试不会加载大型 H3 权重，也不衡量最终视频的口型质量。
 
 ## 来源与许可
 
@@ -152,4 +180,4 @@ python tests/test_avatar.py
 
 ## 回退
 
-[v0.1.1-experimental](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.1-experimental) 仍可用于对比。也可以在工作流中重新连接原版 SelfLift 节点。卸载时先停止 ComfyUI，再将本文件夹移出 `custom_nodes`。
+[v0.1.2-experimental](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.2-experimental) 仍可用于对比。也可以在工作流中重新连接原版 SelfLift 节点。卸载时先停止 ComfyUI，再将本文件夹移出 `custom_nodes`。
