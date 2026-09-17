@@ -175,7 +175,7 @@ class LatentResizer3D(nn.Module):
 
         chunk, overlap = self.temporal_chunk_settings()
         if size[-2] * size[-1] >= 60 * 60:
-            chunk = 6
+            chunk = 3
 
         if not enable_chunking or T <= chunk:
             return self._forward_seg(x, scale, size)
@@ -374,7 +374,7 @@ def learned_latent_lift(z0_low, out_hw, model_name, device=None):
     length = z0_low.shape[2]
     chunk, overlap = model.temporal_chunk_settings()
     if H * W >= 60 * 60:
-        chunk = 6
+        chunk = 3
     identity = (H, W) == (h, w)
     chunked = not identity and length > chunk
     windows = list(_temporal_windows(length, chunk, overlap)) if chunked else []
