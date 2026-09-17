@@ -104,10 +104,12 @@ def _tiled_forward(executor, streams, timestep, context, transformer_options, mi
         window = torch.ones(end - start, device=video.device, dtype=torch.float32)
         if index > 0:
             overlap = min(end, regions[index - 1][1]) - start
-            window[:overlap] *= (torch.arange(overlap, device=video.device, dtype=torch.float32) + 0.5) / overlap
+            t = (torch.arange(overlap, device=video.device, dtype=torch.float32) + 0.5) / overlap
+            window[:overlap] *= 0.5 - 0.5 * torch.cos(torch.pi * t)
         if index + 1 < len(regions):
             overlap = end - regions[index + 1][0]
-            window[-overlap:] *= 1.0 - (torch.arange(overlap, device=video.device, dtype=torch.float32) + 0.5) / overlap
+            t = (torch.arange(overlap, device=video.device, dtype=torch.float32) + 0.5) / overlap
+            window[-overlap:] *= 0.5 + 0.5 * torch.cos(torch.pi * t)
         predicted_video = predicted_video.float().cpu()
         window = window.cpu()
         weights[start:end].add_(window)
@@ -172,7 +174,7 @@ def _prepare_tiled_sampling(executor, model, noise_shape, conds, model_options=N
             _, _, _, _, minimum = _budget(model, noise_shape, conds, latent_shapes, regions, axis)
             if minimum <= available:
                 break
-        count = len(regions)
+        count = min(3, len(regions)) if len(regions) > 1 else 1
         plan['tiles'] = count
         logging.info("[SelfLift tiling plan] axis=%s tiles=%d target=%.2f MiB estimate_fits=%s",
                      'H' if axis == 3 else 'W', plan['tiles'], available / 2**20, minimum <= available)
