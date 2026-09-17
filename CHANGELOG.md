@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.3-experimental — 2026-09-17
+## v0.1.3-experimental — 2026-09-18
 
 - Add backward-compatible auto/manual tile count and direction controls to the H3 sampler.
 - Manual dropdown offers 2, 4, 6, 8 (default 2); auto retains the original 1–8 search.

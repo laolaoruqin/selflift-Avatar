@@ -6,6 +6,24 @@ An independent experimental SelfLift branch for ComfyUI / MiniMax H3. It focuses
 
 > **Experimental, unofficial project.** The current code has passed 47 CPU tests and frontend callback tests with a stub DOM. Earlier versions were exercised in the maintainer's H3 workflow; the new controls still need broader real-model and frontend testing. This is not a systematic benchmark of lip-sync accuracy, speed, or every model/plugin combination. Results can vary by character, audio, prompt, sampler, latent upscaler, and seed.
 
+## What's new in v0.1.3
+
+**This upgrade makes spatial tiling selectable and visible directly on the H3 sampler node.**
+
+| Area | v0.1.2 | v0.1.3 |
+| --- | --- | --- |
+| Tile count | Automatic memory-based planning only | Choose **auto** or **manual**; manual dropdown offers **2 / 4 / 6 / 8**, default **2** |
+| Direction | Automatically use the longer patch-grid side | Choose **auto / width / height**, in either count mode |
+| Plan display | Read console logs | Read-only **in-node status panel** with actual count, direction, ranges, overlap and largest tile |
+| Memory feedback | Console estimates | Estimated available/minimum workspace and insufficient-memory warnings on the node; **not measured VRAM peaks** |
+| Tests | 34 CPU tests | **47 CPU tests** plus frontend callback tests with a stub DOM |
+
+**Unchanged:** auto mode still searches **1–8** tiles, including odd counts; overlap is automatic; temporal upscaler windows are unaffected. Masked tiling still requires **video mask all 1 / audio mask all 0**. Manual mode does not silently increase the count and has no automatic OOM retry. This release does not claim a measured speedup, VRAM-saving percentage or improved lip-sync accuracy.
+
+**After upgrading:** restart the backend and hard-refresh the browser. If an existing sampler does not show the new controls, recreate that node. If an older experimental workflow stored 1 or an odd manual count, re-select **2 / 4 / 6 / 8**. Existing published v0.1.2 workflows default to auto.
+
+[Full changelog](CHANGELOG.md) · [v0.1.3 release and installation ZIP](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.3-experimental)
+
 ## Selectable spatial tiling — v0.1.3
 
 The H3 sampler now exposes optional controls. Existing workflows keep the old defaults.
