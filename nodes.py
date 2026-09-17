@@ -460,7 +460,7 @@ class SelfLiftAvatarH3Sampler:
         def send_status(text):
             server = getattr(PromptServer, "instance", None)
             if unique_id is not None and server is not None and server.client_id is not None:
-                server.send_sync("selflift-avatar-tiling", {"node_id": str(unique_id), "text": text}, server.client_id)
+                server.send_sync("selflift-avatar-tiling", {"node_id": str(unique_id), "text": text, "plan": last_plan}, server.client_id)
 
         def report(plan):
             nonlocal summary, last_plan
@@ -481,7 +481,7 @@ class SelfLiftAvatarH3Sampler:
         if highres_tiling and last_plan is None:
             summary = "NOT RUN / 本次未执行高清分块规划（例如空采样日程）"
         summary = "DONE / 上次运行完成\n" + summary
-        return {"ui": {"selflift_tiling": [summary]}, "result": (output,)}
+        return {"ui": {"selflift_tiling": [summary], "selflift_tiling_plan": [last_plan]}, "result": (output,)}
 
 
 class SelfLiftAvatarImageSampler:

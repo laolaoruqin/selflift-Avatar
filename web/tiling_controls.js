@@ -10,11 +10,27 @@ function choices(node) {
     return `设置 / Settings: ${mode} | axis=${read("tiling_axis", "auto")} | tiles=${mode === "manual" ? read("tiling_tiles", 2) : "auto (1–8)"}`;
 }
 
-function display(node, text) {
+function actualCount(node) {
+    const enabled = node.widgets?.find((w) => w.name === "highres_tiling")?.value ?? false;
+    if (!enabled) return "实际分块数量 / Actual tiles: 关闭，不分块 / OFF";
+    const count = node.selfliftTilingPlan?.tiles;
+    if (!Number.isInteger(count) || count < 1) return "实际分块数量 / Actual tiles: 待估算 / pending (高清准备阶段确定)";
+    return `实际分块数量 / Actual tiles: ${count} 块${count === 1 ? "（整图，不拆分 / no split）" : ""}`;
+}
+
+function display(node, text, plan) {
     const box = node.selfliftTilingPanel;
     if (!box) return;
-    if (text !== undefined) node.selfliftTilingLast = String(text);
-    box.value = choices(node) + "\n" + (node.selfliftTilingLast || "未运行 / Not run. Actual plan appears at high-resolution preparation.\n手动块数仅在 manual 下有效；时间窗口不由这些选项控制。");
+    if (text !== undefined) {
+        node.selfliftTilingLast = String(text);
+        // Explicit null resets a previous run; undefined supports older cached UI text.
+        node.selfliftTilingPlan = plan ?? null;
+        if (plan === undefined) {
+            const match = String(text).match(/Effective \/ 实际:\s*(\d+)/);
+            if (match) node.selfliftTilingPlan = { tiles: Number(match[1]) };
+        }
+    }
+    box.value = actualCount(node) + "\n" + choices(node) + "\n" + (node.selfliftTilingLast || "未运行 / Not run. Actual plan appears at high-resolution preparation.\n手动块数仅在 manual 下有效；时间窗口不由这些选项控制。");
     node.setDirtyCanvas?.(true, true);
 }
 
@@ -55,7 +71,7 @@ app.registerExtension({
         const executed = nodeType.prototype.onExecuted;
         nodeType.prototype.onExecuted = function (message) {
             const result = executed?.apply(this, arguments);
-            if (message?.selflift_tiling) display(this, message.selflift_tiling.join("\n"));
+            if (message?.selflift_tiling) display(this, message.selflift_tiling.join("\n"), message.selflift_tiling_plan?.[0]);
             return result;
         };
     },
@@ -63,8 +79,8 @@ app.registerExtension({
         api.addEventListener("selflift-avatar-tiling", (event) => {
             const id = String(event.detail?.node_id ?? "");
             // Root-graph events use ordinary IDs. Subgraph UI still receives onExecuted.
-            const node = app.graph?.getNodeById(id);
-            if (node?.selfliftTilingPanel) display(node, event.detail.text);
+            const node = app.graph?.getNodeById(id) ?? (/^\d+$/.test(id) ? app.graph?.getNodeById(Number(id)) : null);
+            if (node?.selfliftTilingPanel) display(node, event.detail.text, event.detail.plan);
         });
     },
 });

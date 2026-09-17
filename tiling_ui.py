@@ -7,6 +7,7 @@ def format_plan(plan):
     regions = plan["regions"]
     overlaps = [max(0, regions[i][1] - regions[i + 1][0]) for i in range(len(regions) - 1)]
     lines = [
+        f"实际分块数量 / Actual tiles: {plan['tiles']}" + ("（整图，不拆分 / no split）" if plan['tiles'] == 1 else " 块"),
         f"Spatial / 空间分块 | mode={plan['mode']} | axis={axis}",
         f"Requested / 请求: {request} | Effective / 实际: {plan['tiles']}" + (" (整图 / no split)" if plan['tiles'] == 1 else ""),
         f"Largest latent tile / 最大块: {plan['largest_tile']}",

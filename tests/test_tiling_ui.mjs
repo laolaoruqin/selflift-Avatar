@@ -41,3 +41,26 @@ assert.doesNotMatch(node.selfliftTilingPanel.value,/WRONG NODE/);
 events.get('selflift-avatar-tiling')({detail:{node_id:'78',text:'FAILED'}});
 assert.match(node.selfliftTilingPanel.value,/FAILED/);
 console.log('Frontend callback checks passed: read-only/nonserialized panel, controls, live event, completion, stale reset, configure, node routing, failure.');
+
+// Automatic planning must show the real count above the configuration summary.
+node.widgets[1].value='auto';node.widgets[1].callback();
+assert.match(node.selfliftTilingPanel.value.split('\n')[0], /pending/);
+events.get('selflift-avatar-tiling')({detail:{node_id:'78',text:'RUNNING',plan:{tiles:3,mode:'auto',axis:4}}});
+assert.match(node.selfliftTilingPanel.value.split('\n')[0], /Actual tiles: 3/);
+assert.equal(node.widgets[1].value,'auto');
+assert.equal(node.widgets[2].value,2); // Never overwrite the manual dropdown.
+node.onExecuted({selflift_tiling:['DONE'],selflift_tiling_plan:[{tiles:3,mode:'auto',axis:4}]});
+assert.match(node.selfliftTilingPanel.value.split('\n')[0], /Actual tiles: 3/);
+events.get('selflift-avatar-tiling')({detail:{node_id:'78',text:'Preparing',plan:null}});
+assert.match(node.selfliftTilingPanel.value.split('\n')[0], /pending/);
+// Accommodate graphs keyed by numeric IDs.
+globalThis.testApp.graph.getNodeById=(id)=>id===78?node:null;
+events.get('selflift-avatar-tiling')({detail:{node_id:'78',text:'RUNNING',plan:{tiles:1}}});
+assert.match(node.selfliftTilingPanel.value.split('\n')[0], /Actual tiles: 1.*no split/);
+node.onExecuted({selflift_tiling:['DONE\nRequested / 请求: auto | Effective / 实际: 4']});
+assert.match(node.selfliftTilingPanel.value.split('\n')[0], /Actual tiles: 4/);
+node.widgets[3].callback();
+assert.match(node.selfliftTilingPanel.value.split('\n')[0], /pending/);
+node.widgets[0].value=false;node.widgets[0].callback();
+assert.match(node.selfliftTilingPanel.value.split('\n')[0], /OFF/);
+console.log('Automatic actual-count tests passed (live, complete, reset, cached text, numeric node ID, single tile).');

@@ -1,12 +1,27 @@
 # selflift-Avatar
 
-**当前公开开发版本：`v0.1.3-experimental`** · [English README](README.md) · [更新记录](CHANGELOG.md) · [v0.1.3 发布页](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.3-experimental)
+**当前公开开发版本：`v0.1.4-experimental`** · [English README](README.md) · [更新记录](CHANGELOG.md) · [v0.1.4 发布页](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.4-experimental)
 
 这是一个面向 ComfyUI / MiniMax H3 的 SelfLift 独立实验分支，重点处理 H3 音视频 latent 遮罩、采样过程中的原始音频保留，以及一个有限制的高分辨率自动分块路径。它使用独立的节点 ID，可以和原版 SelfLift 共存。
 
 > **实验版本，非官方项目。** 当前代码已通过 47 项 CPU 测试和模拟 DOM 前端回调测试。此前版本已在维护者的 H3 工作流中试用；新控件仍需更多真实模型与前端测试。尚未进行系统性的口型准确率、速度和所有模型/插件组合测试。不同角色、音频、提示词、采样器、latent upscaler 和 seed 可能产生不同结果。
 
-## 本次升级内容：v0.1.3
+## 本次升级内容：v0.1.4
+
+**自动模式也会在节点状态栏第一行显示实际分块数量，不再只看到 `auto`。**
+
+- 高清准备前：**实际分块数量：待估算**。低清阶段尚未确定自动方案。
+- 方案确定后：显示 **实际 N 块**，包括自动模式选出的奇数；**1 块**明确标注为**整图、不拆分**。
+- 完成后保留结果；修改分块选项或开始新运行时清除旧数量。
+- 实时事件和完成/缓存的节点 UI 结果使用结构化方案数据，并兼容旧缓存文本。
+- 为实时更新增加数字节点 ID 的查找回退；不代表已修复所有子图事件路由。
+- 自动结果不会覆盖手动 **2 / 4 / 6 / 8** 下拉值。
+
+**本次不改采样算法：**块数选择、空间重叠、音频遮罩限制、upscaler 时间窗口和显存估算保持不变。**47 项 CPU 测试**及扩展的模拟 DOM 前端回调测试通过。升级后请重启后端并强制刷新网页。测试不等于完整浏览器或真实大模型效果验证。
+
+[下载 v0.1.4](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.4-experimental) · [完整更新记录](CHANGELOG.md)
+
+## 上一版升级：v0.1.3
 
 **本次把空间分块改成了用户可选，并把实际方案直接显示在 H3 采样器节点上。**
 

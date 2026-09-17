@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.4-experimental — 2026-09-18
+
+- Display actual automatic tile count on the first line of the node panel; show pending before planning and no-split for one tile.
+- Send structured plan data through live events and completed/cached UI results; preserve old cached-text support.
+- Reset stale counts for settings changes and new runs; do not overwrite manual dropdown values.
+- Add numeric-node-ID lookup fallback for live updates.
+- Sampling and tiling algorithms unchanged. 47 CPU tests and expanded stub-DOM frontend callback tests pass.
+
 ## v0.1.3-experimental — 2026-09-18
 
 - Add backward-compatible auto/manual tile count and direction controls to the H3 sampler.

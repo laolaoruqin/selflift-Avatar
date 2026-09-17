@@ -1,12 +1,27 @@
 # selflift-Avatar
 
-**Current public development version: `v0.1.3-experimental`** · [中文说明](README_CN.md) · [Changelog](CHANGELOG.md) · [v0.1.3 release](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.3-experimental)
+**Current public development version: `v0.1.4-experimental`** · [中文说明](README_CN.md) · [Changelog](CHANGELOG.md) · [v0.1.4 release](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.4-experimental)
 
 An independent experimental SelfLift branch for ComfyUI / MiniMax H3. It focuses on H3 audio-video latent masks, preserving source audio during sampling, and a narrowly supported high-resolution tiling path. It registers separate node IDs, so it can coexist with the original SelfLift plugin.
 
 > **Experimental, unofficial project.** The current code has passed 47 CPU tests and frontend callback tests with a stub DOM. Earlier versions were exercised in the maintainer's H3 workflow; the new controls still need broader real-model and frontend testing. This is not a systematic benchmark of lip-sync accuracy, speed, or every model/plugin combination. Results can vary by character, audio, prompt, sampler, latent upscaler, and seed.
 
-## What's new in v0.1.3
+## What's new in v0.1.4
+
+**Automatic mode now shows the actual tile count on the first line of the node status panel, not just `auto`.**
+
+- Before high-resolution preparation: **Actual tiles: pending**. Auto planning is not available during the low-resolution prefix.
+- Once planned: **Actual tiles: N**, including odd counts selected by auto mode. **1 tile** is explicitly labeled **full frame / no split**.
+- The completed result stays visible; changing tiling controls or starting a new run clears the old count.
+- Actual results are delivered as structured plan data for live events and completed/cached node UI results. Older cached text is still recognized.
+- Add a numeric-node-ID lookup fallback for live updates. This is not a general subgraph-routing fix.
+- The manual **2 / 4 / 6 / 8** dropdown is never overwritten by auto results.
+
+**No sampling algorithm change:** tile selection, spatial overlap, audio-mask constraints, temporal upscaler windows and VRAM estimation remain unchanged. **47 CPU tests** plus extended frontend callback tests with a stub DOM passed. Restart the ComfyUI backend and hard-refresh the browser after updating. These tests are not a full browser or real-model benchmark.
+
+[Download v0.1.4](https://github.com/slmonker/selflift-Avatar/releases/tag/v0.1.4-experimental) · [Full changelog](CHANGELOG.md)
+
+## Previous upgrade: v0.1.3
 
 **This upgrade makes spatial tiling selectable and visible directly on the H3 sampler node.**
 

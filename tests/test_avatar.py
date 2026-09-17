@@ -468,6 +468,8 @@ class TilingControlTests(unittest.TestCase):
         self.assertEqual(events[-1][0],'selflift-avatar-tiling')
         self.assertEqual(events[-1][1]['node_id'],'78')
         self.assertEqual(events[-1][2],'test-client')
+        self.assertEqual(events[-1][1]['plan']['tiles'],2)
+        self.assertEqual(result['ui']['selflift_tiling_plan'][0]['tiles'],2)
     def test_node_failure_event_not_success(self):
         events=[]
         server=SimpleNamespace(client_id='test-client',send_sync=lambda *a:events.append(a))
